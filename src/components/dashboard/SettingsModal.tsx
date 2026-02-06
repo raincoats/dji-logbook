@@ -4,6 +4,8 @@
 
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { confirm } from '@tauri-apps/plugin-dialog';
+import { useFlightStore } from '@/stores/flightStore';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -16,6 +18,14 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [appDataDir, setAppDataDir] = useState('');
+  const {
+    unitSystem,
+    setUnitSystem,
+    themeMode,
+    setThemeMode,
+    loadFlights,
+    loadOverview,
+  } = useFlightStore();
 
   // Check if API key exists on mount
   useEffect(() => {
@@ -23,6 +33,23 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       checkApiKey();
       getAppDataDir();
     }
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const hadModalClass = document.body.classList.contains('modal-open');
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    document.body.classList.add('modal-open');
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      if (!hadModalClass) {
+        document.body.classList.remove('modal-open');
+      }
+    };
   }, [isOpen]);
 
   const checkApiKey = async () => {
@@ -64,6 +91,31 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     }
   };
 
+  const handleDeleteAll = async () => {
+    let shouldDelete = false;
+    try {
+      shouldDelete = await confirm(
+        'Delete all flight logs and telemetry? This cannot be undone.',
+        { title: 'Delete all logs', kind: 'warning' }
+      );
+    } catch {
+      shouldDelete = window.confirm(
+        'Delete all flight logs and telemetry? This cannot be undone.'
+      );
+    }
+
+    if (!shouldDelete) return;
+
+    try {
+      await invoke('delete_all_flights');
+      await loadFlights();
+      await loadOverview();
+      setMessage({ type: 'success', text: 'All logs deleted.' });
+    } catch (err) {
+      setMessage({ type: 'error', text: `Failed to delete: ${err}` });
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -75,7 +127,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       />
 
       {/* Modal */}
-      <div className="relative bg-dji-secondary rounded-xl border border-gray-700 shadow-2xl w-full max-w-md mx-4">
+      <div className="relative bg-dji-secondary rounded-xl border border-gray-700 shadow-2xl w-full max-w-md mx-4 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-700">
           <h2 className="text-lg font-semibold text-white">Settings</h2>
@@ -91,6 +143,37 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
         {/* Content */}
         <div className="p-4 space-y-4">
+          {/* Units */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Units
+            </label>
+            <select
+              className="input w-full"
+              value={unitSystem}
+              onChange={(e) => setUnitSystem(e.target.value as 'metric' | 'imperial')}
+            >
+              <option value="metric">Metric (m, km/h)</option>
+              <option value="imperial">Imperial (ft, mph)</option>
+            </select>
+          </div>
+
+          {/* Theme */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Theme
+            </label>
+            <select
+              className="input w-full"
+              value={themeMode}
+              onChange={(e) => setThemeMode(e.target.value as 'system' | 'dark' | 'light')}
+            >
+              <option value="system">System</option>
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </div>
+
           {/* API Key Section */}
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -160,6 +243,12 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             <p className="text-xs text-gray-500 mt-2">
               Your API key is stored locally in <code className="text-gray-400">config.json</code> and never sent to any external servers except DJI's official API.
             </p>
+            <button
+              onClick={handleDeleteAll}
+              className="mt-4 w-full py-2 px-3 rounded-lg border border-red-600 text-red-500 hover:bg-red-500/10 transition-colors"
+            >
+              Delete all logs
+            </button>
           </div>
         </div>
 

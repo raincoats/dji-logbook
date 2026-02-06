@@ -11,9 +11,12 @@ use serde::{Deserialize, Serialize};
 pub struct FlightMetadata {
     pub id: i64,
     pub file_name: String,
+    pub display_name: String,
     pub file_hash: Option<String>,
     pub drone_model: Option<String>,
     pub drone_serial: Option<String>,
+    pub aircraft_name: Option<String>,
+    pub battery_serial: Option<String>,
     pub start_time: Option<DateTime<Utc>>,
     pub end_time: Option<DateTime<Utc>>,
     pub duration_secs: Option<f64>,
@@ -31,8 +34,11 @@ pub struct FlightMetadata {
 pub struct Flight {
     pub id: i64,
     pub file_name: String,
+    pub display_name: String,
     pub drone_model: Option<String>,
     pub drone_serial: Option<String>,
+    pub aircraft_name: Option<String>,
+    pub battery_serial: Option<String>,
     pub start_time: Option<String>,
     pub duration_secs: Option<f64>,
     pub total_distance: Option<f64>,
@@ -50,6 +56,8 @@ pub struct TelemetryPoint {
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub altitude: Option<f64>,
+    pub height: Option<f64>,
+    pub vps_height: Option<f64>,
     pub altitude_abs: Option<f64>,
 
     // Velocity
@@ -89,13 +97,18 @@ pub struct TelemetryRecord {
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub altitude: Option<f64>,
+    pub height: Option<f64>,
+    pub vps_height: Option<f64>,
     pub speed: Option<f64>,
     pub battery_percent: Option<i32>,
+    pub battery_voltage: Option<f64>,
+    pub battery_temp: Option<f64>,
     pub pitch: Option<f64>,
     pub roll: Option<f64>,
     pub yaw: Option<f64>,
     pub satellites: Option<i32>,
     pub flight_mode: Option<String>,
+    pub rc_signal: Option<i32>,
 }
 
 /// Response format optimized for ECharts rendering
@@ -107,20 +120,49 @@ pub struct FlightDataResponse {
     pub track: Vec<[f64; 3]>, // [lng, lat, alt] for map
 }
 
+/// Overview statistics across all flights
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverviewStats {
+    pub total_flights: i64,
+    pub total_distance_m: f64,
+    pub total_duration_secs: f64,
+    pub total_points: i64,
+    pub batteries_used: Vec<BatteryUsage>,
+}
+
+/// Battery usage summary
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatteryUsage {
+    pub battery_serial: String,
+    pub flight_count: i64,
+}
+
 /// Telemetry data formatted for ECharts
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TelemetryData {
     /// Time axis in seconds from flight start
     pub time: Vec<f64>,
-    /// Altitude series
+    /// Altitude series (legacy fallback)
     pub altitude: Vec<Option<f64>>,
+    /// Height series
+    pub height: Vec<Option<f64>>,
+    /// VPS height series
+    pub vps_height: Vec<Option<f64>>,
     /// Speed series
     pub speed: Vec<Option<f64>>,
     /// Battery percent series
     pub battery: Vec<Option<i32>>,
+    /// Battery voltage series
+    pub battery_voltage: Vec<Option<f64>>,
+    /// Battery temperature series
+    pub battery_temp: Vec<Option<f64>>,
     /// Number of GPS satellites
     pub satellites: Vec<Option<i32>>,
+    /// RC signal strength
+    pub rc_signal: Vec<Option<i32>>,
     /// Pitch angle
     pub pitch: Vec<Option<f64>>,
     /// Roll angle
@@ -140,9 +182,14 @@ impl TelemetryData {
                 .map(|r| (r.timestamp_ms - base_time) as f64 / 1000.0)
                 .collect(),
             altitude: records.iter().map(|r| r.altitude).collect(),
+            height: records.iter().map(|r| r.height).collect(),
+            vps_height: records.iter().map(|r| r.vps_height).collect(),
             speed: records.iter().map(|r| r.speed).collect(),
             battery: records.iter().map(|r| r.battery_percent).collect(),
+            battery_voltage: records.iter().map(|r| r.battery_voltage).collect(),
+            battery_temp: records.iter().map(|r| r.battery_temp).collect(),
             satellites: records.iter().map(|r| r.satellites).collect(),
+            rc_signal: records.iter().map(|r| r.rc_signal).collect(),
             pitch: records.iter().map(|r| r.pitch).collect(),
             roll: records.iter().map(|r| r.roll).collect(),
             yaw: records.iter().map(|r| r.yaw).collect(),

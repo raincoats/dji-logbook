@@ -10,10 +10,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use duckdb::{params, Appender, Connection, Result as DuckResult};
+use duckdb::{params, Connection, Result as DuckResult};
 use thiserror::Error;
 
-use crate::models::{Flight, FlightMetadata, TelemetryPoint, TelemetryRecord};
+use crate::models::{BatteryUsage, Flight, FlightMetadata, OverviewStats, TelemetryPoint, TelemetryRecord};
 
 /// Custom error types for database operations
 #[derive(Error, Debug)]
@@ -60,8 +60,8 @@ impl Database {
 
         log::info!("Initializing DuckDB at: {:?}", db_path);
 
-        // Open or create the database
-        let conn = Connection::open(&db_path)?;
+        // Open or create the database (with WAL recovery)
+        let conn = Self::open_with_recovery(&db_path)?;
 
         // Configure DuckDB for optimal performance
         Self::configure_connection(&conn)?;
@@ -75,6 +75,54 @@ impl Database {
         db.init_schema()?;
 
         Ok(db)
+    }
+
+    fn open_with_recovery(db_path: &PathBuf) -> Result<Connection, DatabaseError> {
+        match Connection::open(db_path) {
+            Ok(conn) => Ok(conn),
+            Err(err) => {
+                log::warn!("DuckDB open failed: {}. Attempting WAL recovery...", err);
+
+                let wal_path = db_path.with_extension("db.wal");
+                if wal_path.exists() {
+                    if let Err(wal_err) = fs::remove_file(&wal_path) {
+                        log::warn!("Failed to remove WAL file {:?}: {}", wal_path, wal_err);
+                    } else {
+                        log::info!("Removed WAL file {:?}", wal_path);
+                    }
+                }
+
+                match Connection::open(db_path) {
+                    Ok(conn) => Ok(conn),
+                    Err(second_err) => {
+                        log::warn!("WAL recovery failed: {}. Backing up DB and recreating...", second_err);
+
+                        let backup_path = Self::backup_db(db_path)?;
+                        log::warn!("Database backed up to {:?}", backup_path);
+
+                        Connection::open(db_path).map_err(DatabaseError::from)
+                    }
+                }
+            }
+        }
+    }
+
+    fn backup_db(db_path: &PathBuf) -> Result<PathBuf, DatabaseError> {
+        if !db_path.exists() {
+            return Ok(db_path.clone());
+        }
+
+        let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+        let backup_path = db_path.with_extension(format!("db.bak.{}", timestamp));
+        fs::rename(db_path, &backup_path)?;
+
+        let wal_path = db_path.with_extension("db.wal");
+        if wal_path.exists() {
+            let wal_backup = wal_path.with_extension(format!("db.wal.bak.{}", timestamp));
+            let _ = fs::rename(&wal_path, wal_backup);
+        }
+
+        Ok(backup_path)
     }
 
     /// Configure DuckDB connection for optimal analytical performance
@@ -102,9 +150,12 @@ impl Database {
             CREATE TABLE IF NOT EXISTS flights (
                 id              BIGINT PRIMARY KEY,
                 file_name       VARCHAR NOT NULL,
+                display_name    VARCHAR NOT NULL,
                 file_hash       VARCHAR UNIQUE,          -- SHA256 to prevent duplicates
                 drone_model     VARCHAR,
                 drone_serial    VARCHAR,
+                aircraft_name   VARCHAR,
+                battery_serial  VARCHAR,
                 start_time      TIMESTAMP WITH TIME ZONE,
                 end_time        TIMESTAMP WITH TIME ZONE,
                 duration_secs   DOUBLE,
@@ -122,6 +173,11 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_flights_start_time 
                 ON flights(start_time DESC);
 
+            -- Schema migrations for existing databases
+            ALTER TABLE flights ADD COLUMN IF NOT EXISTS display_name VARCHAR;
+            ALTER TABLE flights ADD COLUMN IF NOT EXISTS aircraft_name VARCHAR;
+            ALTER TABLE flights ADD COLUMN IF NOT EXISTS battery_serial VARCHAR;
+
             -- ============================================================
             -- TELEMETRY TABLE: Time-series data for each flight
             -- Optimized for range queries on timestamp
@@ -134,6 +190,8 @@ impl Database {
                 latitude        DOUBLE,
                 longitude       DOUBLE,
                 altitude        DOUBLE,                  -- Relative altitude in meters
+                height          DOUBLE,                  -- Height above takeoff in meters
+                vps_height      DOUBLE,                  -- VPS height in meters
                 altitude_abs    DOUBLE,                  -- Absolute altitude (MSL)
                 
                 -- Velocity
@@ -174,6 +232,10 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_telemetry_flight_time 
                 ON telemetry(flight_id, timestamp_ms);
 
+            -- Schema migrations for existing databases
+            ALTER TABLE telemetry ADD COLUMN IF NOT EXISTS height DOUBLE;
+            ALTER TABLE telemetry ADD COLUMN IF NOT EXISTS vps_height DOUBLE;
+
             -- ============================================================
             -- KEYCHAIN TABLE: Store cached decryption keys for V13+ logs
             -- ============================================================
@@ -185,7 +247,81 @@ impl Database {
             "#,
         )?;
 
+        Self::ensure_telemetry_column_order(&conn)?;
+
         log::info!("Database schema initialized successfully");
+        Ok(())
+    }
+
+    fn ensure_telemetry_column_order(conn: &Connection) -> Result<(), DatabaseError> {
+        let expected = vec![
+            "flight_id",
+            "timestamp_ms",
+            "latitude",
+            "longitude",
+            "altitude",
+            "height",
+            "vps_height",
+            "altitude_abs",
+            "speed",
+            "velocity_x",
+            "velocity_y",
+            "velocity_z",
+            "pitch",
+            "roll",
+            "yaw",
+            "gimbal_pitch",
+            "gimbal_roll",
+            "gimbal_yaw",
+            "battery_percent",
+            "battery_voltage",
+            "battery_current",
+            "battery_temp",
+            "flight_mode",
+            "gps_signal",
+            "satellites",
+            "rc_signal",
+        ];
+
+        let mut stmt = conn.prepare("PRAGMA table_info('telemetry')")?;
+        let actual: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if actual.iter().map(String::as_str).eq(expected.iter().copied()) {
+            return Ok(());
+        }
+
+        log::warn!("Telemetry column order mismatch detected. Rebuilding table.");
+
+        let existing: std::collections::HashSet<&str> =
+            actual.iter().map(|s| s.as_str()).collect();
+
+        let select_list = expected
+            .iter()
+            .map(|col| {
+                if existing.contains(col) {
+                    col.to_string()
+                } else {
+                    format!("NULL AS {}", col)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        conn.execute_batch(&format!(
+            r#"
+            BEGIN TRANSACTION;
+            CREATE TABLE telemetry_new AS SELECT {} FROM telemetry;
+            DROP TABLE telemetry;
+            ALTER TABLE telemetry_new RENAME TO telemetry;
+            CREATE INDEX IF NOT EXISTS idx_telemetry_flight_time
+                ON telemetry(flight_id, timestamp_ms);
+            COMMIT;
+            "#,
+            select_list
+        ))?;
+
         Ok(())
     }
 
@@ -217,17 +353,21 @@ impl Database {
         conn.execute(
             r#"
             INSERT INTO flights (
-                id, file_name, file_hash, drone_model, drone_serial,
+                id, file_name, display_name, file_hash, drone_model, drone_serial,
+                aircraft_name, battery_serial,
                 start_time, end_time, duration_secs, total_distance,
                 max_altitude, max_speed, home_lat, home_lon, point_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
             params![
                 flight.id,
                 flight.file_name,
+                flight.display_name,
                 flight.file_hash,
                 flight.drone_model,
                 flight.drone_serial,
+                flight.aircraft_name,
+                flight.battery_serial,
                 flight.start_time.map(|t| t.to_rfc3339()),
                 flight.end_time.map(|t| t.to_rfc3339()),
                 flight.duration_secs,
@@ -255,7 +395,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
 
         // Use DuckDB Appender for high-performance bulk inserts
-        let mut appender: Appender = conn.appender("telemetry")?;
+        let mut appender = conn.appender("telemetry")?;
 
         for point in points {
             appender.append_row(params![
@@ -264,6 +404,8 @@ impl Database {
                 point.latitude,
                 point.longitude,
                 point.altitude,
+                point.height,
+                point.vps_height,
                 point.altitude_abs,
                 point.speed,
                 point.velocity_x,
@@ -286,7 +428,6 @@ impl Database {
             ])?;
         }
 
-        // Flush the appender
         appender.flush()?;
 
         log::info!(
@@ -304,7 +445,8 @@ impl Database {
         let mut stmt = conn.prepare(
             r#"
             SELECT 
-                id, file_name, drone_model, drone_serial,
+                id, file_name, COALESCE(display_name, file_name) AS display_name,
+                drone_model, drone_serial, aircraft_name, battery_serial,
                 CAST(start_time AS VARCHAR) AS start_time,
                 duration_secs, total_distance,
                 max_altitude, max_speed, point_count
@@ -318,14 +460,17 @@ impl Database {
                 Ok(Flight {
                     id: row.get(0)?,
                     file_name: row.get(1)?,
-                    drone_model: row.get(2)?,
-                    drone_serial: row.get(3)?,
-                    start_time: row.get(4)?,
-                    duration_secs: row.get(5)?,
-                    total_distance: row.get(6)?,
-                    max_altitude: row.get(7)?,
-                    max_speed: row.get(8)?,
-                    point_count: row.get(9)?,
+                    display_name: row.get(2)?,
+                    drone_model: row.get(3)?,
+                    drone_serial: row.get(4)?,
+                    aircraft_name: row.get(5)?,
+                    battery_serial: row.get(6)?,
+                    start_time: row.get(7)?,
+                    duration_secs: row.get(8)?,
+                    total_distance: row.get(9)?,
+                    max_altitude: row.get(10)?,
+                    max_speed: row.get(11)?,
+                    point_count: row.get(12)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -393,13 +538,18 @@ impl Database {
                 latitude,
                 longitude, 
                 altitude,
+                height,
+                vps_height,
                 speed,
                 battery_percent,
+                battery_voltage,
+                battery_temp,
                 pitch,
                 roll,
                 yaw,
                 satellites,
-                flight_mode
+                flight_mode,
+                rc_signal
             FROM telemetry
             WHERE flight_id = ?
             ORDER BY timestamp_ms ASC
@@ -413,13 +563,18 @@ impl Database {
                     latitude: row.get(1)?,
                     longitude: row.get(2)?,
                     altitude: row.get(3)?,
-                    speed: row.get(4)?,
-                    battery_percent: row.get(5)?,
-                    pitch: row.get(6)?,
-                    roll: row.get(7)?,
-                    yaw: row.get(8)?,
-                    satellites: row.get(9)?,
-                    flight_mode: row.get(10)?,
+                    height: row.get(4)?,
+                    vps_height: row.get(5)?,
+                    speed: row.get(6)?,
+                    battery_percent: row.get(7)?,
+                    battery_voltage: row.get(8)?,
+                    battery_temp: row.get(9)?,
+                    pitch: row.get(10)?,
+                    roll: row.get(11)?,
+                    yaw: row.get(12)?,
+                    satellites: row.get(13)?,
+                    flight_mode: row.get(14)?,
+                    rc_signal: row.get(15)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -454,13 +609,18 @@ impl Database {
                     AVG(latitude) AS latitude,
                     AVG(longitude) AS longitude,
                     AVG(altitude) AS altitude,
+                    AVG(height) AS height,
+                    AVG(vps_height) AS vps_height,
                     AVG(speed) AS speed,
                     AVG(battery_percent)::INTEGER AS battery_percent,
+                    AVG(battery_voltage) AS battery_voltage,
+                    AVG(battery_temp) AS battery_temp,
                     AVG(pitch) AS pitch,
                     AVG(roll) AS roll,
                     AVG(yaw) AS yaw,
                     MODE(satellites) AS satellites,
-                    MODE(flight_mode) AS flight_mode
+                    MODE(flight_mode) AS flight_mode,
+                    AVG(rc_signal)::INTEGER AS rc_signal
                 FROM telemetry
                 WHERE flight_id = ?
                 GROUP BY bucket_ts
@@ -477,13 +637,18 @@ impl Database {
                     latitude: row.get(1)?,
                     longitude: row.get(2)?,
                     altitude: row.get(3)?,
-                    speed: row.get(4)?,
-                    battery_percent: row.get(5)?,
-                    pitch: row.get(6)?,
-                    roll: row.get(7)?,
-                    yaw: row.get(8)?,
-                    satellites: row.get(9)?,
-                    flight_mode: row.get(10)?,
+                    height: row.get(4)?,
+                    vps_height: row.get(5)?,
+                    speed: row.get(6)?,
+                    battery_percent: row.get(7)?,
+                    battery_voltage: row.get(8)?,
+                    battery_temp: row.get(9)?,
+                    pitch: row.get(10)?,
+                    roll: row.get(11)?,
+                    yaw: row.get(12)?,
+                    satellites: row.get(13)?,
+                    flight_mode: row.get(14)?,
+                    rc_signal: row.get(15)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -553,6 +718,75 @@ impl Database {
         Ok(())
     }
 
+    /// Delete all flights and associated telemetry
+    pub fn delete_all_flights(&self) -> Result<(), DatabaseError> {
+        let conn = self.conn.lock().unwrap();
+
+        conn.execute("DELETE FROM telemetry", params![])?;
+        conn.execute("DELETE FROM flights", params![])?;
+
+        log::info!("Deleted all flights and telemetry");
+        Ok(())
+    }
+
+    /// Get overview stats across all flights
+    pub fn get_overview_stats(&self) -> Result<OverviewStats, DatabaseError> {
+        let conn = self.conn.lock().unwrap();
+
+        let (total_flights, total_distance, total_duration, total_points): (i64, f64, f64, i64) =
+            conn.query_row(
+                r#"
+                SELECT
+                    COUNT(*)::BIGINT,
+                    COALESCE(SUM(total_distance), 0)::DOUBLE,
+                    COALESCE(SUM(duration_secs), 0)::DOUBLE,
+                    COALESCE(SUM(point_count), 0)::BIGINT
+                FROM flights
+                "#,
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?;
+
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT battery_serial, COUNT(*)::BIGINT AS flight_count
+            FROM flights
+            WHERE battery_serial IS NOT NULL AND battery_serial <> ''
+            GROUP BY battery_serial
+            ORDER BY flight_count DESC
+            "#,
+        )?;
+
+        let batteries_used = stmt
+            .query_map([], |row| {
+                Ok(BatteryUsage {
+                    battery_serial: row.get(0)?,
+                    flight_count: row.get(1)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(OverviewStats {
+            total_flights,
+            total_distance_m: total_distance,
+            total_duration_secs: total_duration,
+            total_points,
+            batteries_used,
+        })
+    }
+
+    /// Update the display name for a flight
+    pub fn update_flight_name(&self, flight_id: i64, display_name: &str) -> Result<(), DatabaseError> {
+        let conn = self.conn.lock().unwrap();
+
+        conn.execute(
+            "UPDATE flights SET display_name = ? WHERE id = ?",
+            params![display_name, flight_id],
+        )?;
+
+        Ok(())
+    }
+
     /// Check if a file has already been imported (by hash)
     pub fn is_file_imported(&self, file_hash: &str) -> Result<bool, DatabaseError> {
         let conn = self.conn.lock().unwrap();
@@ -601,6 +835,7 @@ impl Database {
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {

@@ -2,6 +2,8 @@
  * Utility functions for formatting and calculations
  */
 
+export type UnitSystem = 'metric' | 'imperial';
+
 /** Format duration from seconds to human readable string */
 export function formatDuration(seconds: number | null): string {
   if (seconds === null || seconds === undefined) return '--:--';
@@ -17,8 +19,16 @@ export function formatDuration(seconds: number | null): string {
 }
 
 /** Format distance in meters to human readable string */
-export function formatDistance(meters: number | null): string {
+export function formatDistance(
+  meters: number | null,
+  unitSystem: UnitSystem = 'metric'
+): string {
   if (meters === null || meters === undefined) return '--';
+
+  if (unitSystem === 'imperial') {
+    const miles = meters / 1609.344;
+    return `${miles.toFixed(2)} mi`;
+  }
   
   if (meters >= 1000) {
     return `${(meters / 1000).toFixed(2)} km`;
@@ -26,16 +36,30 @@ export function formatDistance(meters: number | null): string {
   return `${meters.toFixed(0)} m`;
 }
 
-/** Format speed from m/s to km/h */
-export function formatSpeed(ms: number | null): string {
+/** Format speed from m/s to km/h or mph */
+export function formatSpeed(
+  ms: number | null,
+  unitSystem: UnitSystem = 'metric'
+): string {
   if (ms === null || ms === undefined) return '--';
+  if (unitSystem === 'imperial') {
+    const mph = ms * 2.236936;
+    return `${mph.toFixed(1)} mph`;
+  }
   const kmh = ms * 3.6;
   return `${kmh.toFixed(1)} km/h`;
 }
 
 /** Format altitude in meters */
-export function formatAltitude(meters: number | null): string {
+export function formatAltitude(
+  meters: number | null,
+  unitSystem: UnitSystem = 'metric'
+): string {
   if (meters === null || meters === undefined) return '--';
+  if (unitSystem === 'imperial') {
+    const feet = meters * 3.28084;
+    return `${feet.toFixed(1)} ft`;
+  }
   return `${meters.toFixed(1)} m`;
 }
 

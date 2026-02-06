@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 
 use database::{Database, DatabaseError};
-use models::{Flight, FlightDataResponse, ImportResult, TelemetryData};
+use models::{Flight, FlightDataResponse, ImportResult, OverviewStats, TelemetryData};
 use parser::LogParser;
 use api::DjiApi;
 
@@ -183,6 +183,15 @@ async fn get_flight_data(
     })
 }
 
+/// Get overview stats for all flights
+#[tauri::command]
+async fn get_overview_stats(state: State<'_, AppState>) -> Result<OverviewStats, String> {
+    state
+        .db
+        .get_overview_stats()
+        .map_err(|e| format!("Failed to get overview stats: {}", e))
+}
+
 /// Delete a flight and all its telemetry data
 #[tauri::command]
 async fn delete_flight(flight_id: i64, state: State<'_, AppState>) -> Result<bool, String> {
@@ -191,6 +200,35 @@ async fn delete_flight(flight_id: i64, state: State<'_, AppState>) -> Result<boo
         .delete_flight(flight_id)
         .map(|_| true)
         .map_err(|e| format!("Failed to delete flight: {}", e))
+}
+
+/// Delete all flights and telemetry
+#[tauri::command]
+async fn delete_all_flights(state: State<'_, AppState>) -> Result<bool, String> {
+    state
+        .db
+        .delete_all_flights()
+        .map(|_| true)
+        .map_err(|e| format!("Failed to delete all flights: {}", e))
+}
+
+/// Update a flight display name
+#[tauri::command]
+async fn update_flight_name(
+    flight_id: i64,
+    display_name: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let trimmed = display_name.trim();
+    if trimmed.is_empty() {
+        return Err("Display name cannot be empty".to_string());
+    }
+
+    state
+        .db
+        .update_flight_name(flight_id, trimmed)
+        .map(|_| true)
+        .map_err(|e| format!("Failed to update flight name: {}", e))
 }
 
 /// Get the raw_logs directory path for the frontend
@@ -249,7 +287,10 @@ pub fn run() {
             import_log,
             get_flights,
             get_flight_data,
+            get_overview_stats,
             delete_flight,
+            delete_all_flights,
+            update_flight_name,
             get_raw_logs_dir,
             has_api_key,
             set_api_key,

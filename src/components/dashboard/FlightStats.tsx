@@ -11,6 +11,7 @@ import {
   formatAltitude,
   formatDateTime,
 } from '@/lib/utils';
+import { useFlightStore } from '@/stores/flightStore';
 
 interface FlightStatsProps {
   data: FlightDataResponse;
@@ -18,6 +19,7 @@ interface FlightStatsProps {
 
 export function FlightStats({ data }: FlightStatsProps) {
   const { flight, telemetry } = data;
+  const { unitSystem } = useFlightStore();
 
   // Calculate min battery from telemetry
   const minBattery = telemetry.battery.reduce<number | null>((min, val) => {
@@ -32,13 +34,28 @@ export function FlightStats({ data }: FlightStatsProps) {
       <div className="flex items-center justify-between mb-3">
         <div>
           <h2 className="text-lg font-semibold text-white">
-            {flight.droneModel || 'Unknown Drone'}
+            {flight.displayName || flight.fileName}
           </h2>
+          {flight.droneModel && !flight.droneModel.startsWith('Unknown') && (
+            <p className="text-xs text-gray-500">
+              {flight.droneModel}
+            </p>
+          )}
           <p className="text-sm text-gray-400">
             {formatDateTime(flight.startTime)}
+            {flight.aircraftName && (
+              <span className="ml-2 text-gray-500">
+                Device: {flight.aircraftName}
+              </span>
+            )}
             {flight.droneSerial && (
               <span className="ml-2 text-gray-500">
                 SN: {flight.droneSerial}
+              </span>
+            )}
+            {flight.batterySerial && (
+              <span className="ml-2 text-gray-500">
+                Battery SN: {flight.batterySerial}
               </span>
             )}
           </p>
@@ -60,17 +77,17 @@ export function FlightStats({ data }: FlightStatsProps) {
         />
         <StatCard
           label="Distance"
-          value={formatDistance(flight.totalDistance)}
+          value={formatDistance(flight.totalDistance, unitSystem)}
           icon={<DistanceIcon />}
         />
         <StatCard
-          label="Max Altitude"
-          value={formatAltitude(flight.maxAltitude)}
+          label="Max Height"
+          value={formatAltitude(flight.maxAltitude, unitSystem)}
           icon={<AltitudeIcon />}
         />
         <StatCard
           label="Max Speed"
-          value={formatSpeed(flight.maxSpeed)}
+          value={formatSpeed(flight.maxSpeed, unitSystem)}
           icon={<SpeedIcon />}
         />
         <StatCard
@@ -203,3 +220,4 @@ function BatteryIcon({ percent }: { percent: number | null }) {
     </svg>
   );
 }
+

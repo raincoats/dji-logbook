@@ -157,12 +157,22 @@ impl<'a> LogParser<'a> {
             .unwrap_or("unknown")
             .to_string();
 
+        let display_name = file_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(&file_name)
+            .to_string();
+
         let metadata = FlightMetadata {
             id: self.db.generate_flight_id(),
             file_name,
+            display_name,
             file_hash: Some(file_hash),
             drone_model: self.extract_drone_model(&parser),
             drone_serial: self.extract_serial(&parser),
+            aircraft_name: self.extract_aircraft_name(&parser),
+            battery_serial: self.extract_battery_serial(&parser),
             start_time: self.extract_start_time(&parser),
             end_time: self.extract_end_time(&parser),
             duration_secs: Some(stats.duration_secs),
@@ -221,6 +231,8 @@ impl<'a> LogParser<'a> {
             point.latitude = Some(osd.latitude);
             point.longitude = Some(osd.longitude);
             point.altitude = Some(osd.altitude as f64);
+            point.height = Some(osd.height as f64);
+            point.vps_height = Some(osd.vps_height as f64);
             point.speed = Some((osd.x_speed.powi(2) + osd.y_speed.powi(2)).sqrt() as f64);
             point.velocity_x = Some(osd.x_speed as f64);
             point.velocity_y = Some(osd.y_speed as f64);
@@ -238,6 +250,8 @@ impl<'a> LogParser<'a> {
 
             point.battery_percent = Some(battery.charge_level as i32);
             point.battery_voltage = Some(battery.voltage as f64);
+            point.battery_current = Some(battery.current as f64);
+            point.battery_temp = Some(battery.temperature as f64);
 
             point.rc_signal = rc.downlink_signal.or(rc.uplink_signal).map(i32::from);
 
@@ -259,7 +273,7 @@ impl<'a> LogParser<'a> {
 
         let max_altitude = points
             .iter()
-            .filter_map(|p| p.altitude)
+            .filter_map(|p| p.height.or(p.altitude))
             .fold(f64::NEG_INFINITY, f64::max);
 
         let max_speed = points
@@ -329,12 +343,37 @@ impl<'a> LogParser<'a> {
 
     /// Extract drone model from parser metadata
     fn extract_drone_model(&self, parser: &DJILog) -> Option<String> {
-        Some(format!("{:?}", parser.details.product_type))
+        let model = format!("{:?}", parser.details.product_type);
+        if model.starts_with("Unknown") {
+            None
+        } else {
+            Some(model)
+        }
     }
 
     /// Extract serial number from parser
     fn extract_serial(&self, parser: &DJILog) -> Option<String> {
         let sn = parser.details.aircraft_sn.clone();
+        if sn.trim().is_empty() {
+            None
+        } else {
+            Some(sn)
+        }
+    }
+
+    /// Extract aircraft name from parser
+    fn extract_aircraft_name(&self, parser: &DJILog) -> Option<String> {
+        let name = parser.details.aircraft_name.clone();
+        if name.trim().is_empty() {
+            None
+        } else {
+            Some(name)
+        }
+    }
+
+    /// Extract battery serial from parser
+    fn extract_battery_serial(&self, parser: &DJILog) -> Option<String> {
+        let sn = parser.details.battery_sn.clone();
         if sn.trim().is_empty() {
             None
         } else {

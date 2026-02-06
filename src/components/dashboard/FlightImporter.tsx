@@ -3,18 +3,31 @@
  * Handles file selection and invokes the Rust import command
  */
 
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useFlightStore } from '@/stores/flightStore';
 
 export function FlightImporter() {
   const { importLog, isImporting } = useFlightStore();
+  const [isBatchProcessing, setIsBatchProcessing] = useState(false);
+  const [batchMessage, setBatchMessage] = useState<string | null>(null);
+  const [cooldownRemaining, setCooldownRemaining] = useState(0);
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const runCooldown = async (seconds: number) => {
+    setCooldownRemaining(seconds);
+    for (let remaining = seconds; remaining > 0; remaining -= 1) {
+      await sleep(1000);
+      setCooldownRemaining(remaining - 1);
+    }
+  };
 
   // Handle file selection via dialog
   const handleBrowse = async () => {
     const selected = await open({
-      multiple: false,
+      multiple: true,
       filters: [
         {
           name: 'DJI Log Files',
@@ -23,11 +36,45 @@ export function FlightImporter() {
       ],
     });
 
-    if (selected && typeof selected === 'string') {
-      const result = await importLog(selected);
+    const files =
+      typeof selected === 'string'
+        ? [selected]
+        : Array.isArray(selected)
+        ? selected
+        : [];
+
+    if (files.length === 0) return;
+
+    setBatchMessage(null);
+    setIsBatchProcessing(true);
+    let skipped = 0;
+    let processed = 0;
+
+    for (const filePath of files) {
+      const result = await importLog(filePath);
       if (!result.success) {
-        alert(result.message);
+        if (result.message.toLowerCase().includes('already been imported')) {
+          skipped += 1;
+        } else {
+          alert(result.message);
+        }
+      } else {
+        processed += 1;
       }
+
+      await runCooldown(5);
+    }
+
+    setIsBatchProcessing(false);
+    if (skipped > 0) {
+      setBatchMessage(
+        `Import finished. ${processed} file${processed === 1 ? '' : 's'} processed, ` +
+          `${skipped} file${skipped === 1 ? '' : 's'} skipped (already imported).`
+      );
+    } else {
+      setBatchMessage(
+        `Import finished. ${processed} file${processed === 1 ? '' : 's'} processed.`
+      );
     }
   };
 
@@ -53,7 +100,7 @@ export function FlightImporter() {
       'text/plain': ['.txt', '.dat', '.log'],
       'text/csv': ['.csv'],
     },
-    multiple: false,
+    multiple: true,
     noClick: true, // Disable click to use our custom button
   });
 
@@ -64,10 +111,14 @@ export function FlightImporter() {
     >
       <input {...getInputProps()} />
 
-      {isImporting ? (
+      {isImporting || isBatchProcessing ? (
         <div className="flex flex-col items-center gap-2">
           <div className="w-6 h-6 border-2 border-dji-primary border-t-transparent rounded-full spinner" />
-          <span className="text-sm text-gray-400">Importing...</span>
+          <span className="text-sm text-gray-400">
+            {cooldownRemaining > 0
+              ? `Cooling down... ${cooldownRemaining}s`
+              : 'Importing...'}
+          </span>
         </div>
       ) : (
         <>
@@ -96,10 +147,13 @@ export function FlightImporter() {
           <button
             onClick={handleBrowse}
             className="btn-primary text-sm py-1.5 px-3"
-            disabled={isImporting}
+            disabled={isImporting || isBatchProcessing}
           >
             Browse Files
           </button>
+          {batchMessage && (
+            <p className="mt-2 text-xs text-gray-400">{batchMessage}</p>
+          )}
         </>
       )}
     </div>

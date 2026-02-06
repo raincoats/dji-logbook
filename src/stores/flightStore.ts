@@ -5,22 +5,29 @@
 
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
-import type { Flight, FlightDataResponse, ImportResult } from '@/types';
+import type { Flight, FlightDataResponse, ImportResult, OverviewStats } from '@/types';
 
 interface FlightState {
   // State
   flights: Flight[];
   selectedFlightId: number | null;
   currentFlightData: FlightDataResponse | null;
+  overviewStats: OverviewStats | null;
   isLoading: boolean;
   isImporting: boolean;
   error: string | null;
+  unitSystem: 'metric' | 'imperial';
+  themeMode: 'system' | 'dark' | 'light';
 
   // Actions
   loadFlights: () => Promise<void>;
+  loadOverview: () => Promise<void>;
   selectFlight: (flightId: number) => Promise<void>;
   importLog: (filePath: string) => Promise<ImportResult>;
   deleteFlight: (flightId: number) => Promise<void>;
+  updateFlightName: (flightId: number, displayName: string) => Promise<void>;
+  setUnitSystem: (unitSystem: 'metric' | 'imperial') => void;
+  setThemeMode: (themeMode: 'system' | 'dark' | 'light') => void;
   clearError: () => void;
 }
 
@@ -29,9 +36,18 @@ export const useFlightStore = create<FlightState>((set, get) => ({
   flights: [],
   selectedFlightId: null,
   currentFlightData: null,
+  overviewStats: null,
   isLoading: false,
   isImporting: false,
   error: null,
+  unitSystem:
+    (typeof localStorage !== 'undefined' &&
+      (localStorage.getItem('unitSystem') as 'metric' | 'imperial')) ||
+    'metric',
+  themeMode:
+    (typeof localStorage !== 'undefined' &&
+      (localStorage.getItem('themeMode') as 'system' | 'dark' | 'light')) ||
+    'system',
 
   // Load all flights from database
   loadFlights: async () => {
@@ -48,6 +64,19 @@ export const useFlightStore = create<FlightState>((set, get) => ({
       set({ 
         isLoading: false, 
         error: `Failed to load flights: ${err}` 
+      });
+    }
+  },
+
+  loadOverview: async () => {
+    set({ isLoading: true, error: null });
+    try {
+      const stats = await invoke<OverviewStats>('get_overview_stats');
+      set({ overviewStats: stats, isLoading: false });
+    } catch (err) {
+      set({
+        isLoading: false,
+        error: `Failed to load overview stats: ${err}`,
       });
     }
   },
@@ -110,6 +139,48 @@ export const useFlightStore = create<FlightState>((set, get) => ({
     } catch (err) {
       set({ error: `Failed to delete flight: ${err}` });
     }
+  },
+
+  // Update flight display name
+  updateFlightName: async (flightId: number, displayName: string) => {
+    try {
+      await invoke('update_flight_name', { flightId, displayName });
+
+      // Update local list
+      const flights = get().flights.map((flight) =>
+        flight.id === flightId
+          ? { ...flight, displayName }
+          : flight
+      );
+      set({ flights });
+
+      // If selected, update current flight data too
+      const current = get().currentFlightData;
+      if (current && current.flight.id === flightId) {
+        set({
+          currentFlightData: {
+            ...current,
+            flight: { ...current.flight, displayName },
+          },
+        });
+      }
+    } catch (err) {
+      set({ error: `Failed to update flight name: ${err}` });
+    }
+  },
+
+  setUnitSystem: (unitSystem) => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('unitSystem', unitSystem);
+    }
+    set({ unitSystem });
+  },
+
+  setThemeMode: (themeMode) => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('themeMode', themeMode);
+    }
+    set({ themeMode });
   },
 
   // Clear error

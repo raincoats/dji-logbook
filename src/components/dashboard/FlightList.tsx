@@ -3,12 +3,22 @@
  * Displays all imported flights with selection
  */
 
+import { useState } from 'react';
 import { useFlightStore } from '@/stores/flightStore';
 import { formatDuration, formatDateTime, formatDistance } from '@/lib/utils';
 
 export function FlightList() {
-  const { flights, selectedFlightId, selectFlight, deleteFlight } =
+  const {
+    flights,
+    selectedFlightId,
+    selectFlight,
+    deleteFlight,
+    updateFlightName,
+    unitSystem,
+  } =
     useFlightStore();
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [draftName, setDraftName] = useState('');
 
   if (flights.length === 0) {
     return (
@@ -24,9 +34,16 @@ export function FlightList() {
   return (
     <div className="divide-y divide-gray-700/50">
       {flights.map((flight) => (
-        <button
+        <div
           key={flight.id}
           onClick={() => selectFlight(flight.id)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              selectFlight(flight.id);
+            }
+          }}
           className={`w-full p-3 text-left hover:bg-gray-700/30 transition-colors group ${
             selectedFlightId === flight.id
               ? 'bg-dji-primary/20 border-l-2 border-dji-primary'
@@ -35,10 +52,64 @@ export function FlightList() {
         >
           <div className="flex items-start justify-between">
             <div className="flex-1 min-w-0">
+              {/* Display Name */}
+              {editingId === flight.id ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    value={draftName}
+                    onChange={(e) => setDraftName(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="input h-7 text-sm px-2"
+                    placeholder="Flight name"
+                  />
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const name = draftName.trim();
+                      if (name.length > 0) {
+                        updateFlightName(flight.id, name);
+                      }
+                      setEditingId(null);
+                    }}
+                    className="text-xs text-dji-primary hover:text-dji-accent"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingId(null);
+                    }}
+                    className="text-xs text-gray-400 hover:text-gray-200"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <p className="font-medium text-white truncate">
+                    {flight.displayName || flight.fileName}
+                  </p>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingId(flight.id);
+                      setDraftName(flight.displayName || flight.fileName);
+                    }}
+                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-white transition-colors"
+                    title="Rename flight"
+                  >
+                    <EditIcon />
+                  </button>
+                </div>
+              )}
+
               {/* Drone Model */}
-              <p className="font-medium text-white truncate">
-                {flight.droneModel || 'Unknown Drone'}
-              </p>
+              {flight.droneModel && !flight.droneModel.startsWith('Unknown') && (
+                <p className="text-xs text-gray-500 mt-0.5 truncate">
+                  {flight.droneModel}
+                </p>
+              )}
 
               {/* Flight Date */}
               <p className="text-xs text-gray-400 mt-0.5">
@@ -53,16 +124,19 @@ export function FlightList() {
                 </span>
                 <span className="flex items-center gap-1">
                   <DistanceIcon />
-                  {formatDistance(flight.totalDistance)}
+                  {formatDistance(flight.totalDistance, unitSystem)}
                 </span>
               </div>
             </div>
 
             {/* Delete Button */}
             <button
-              onClick={(e) => {
+              onClick={async (e) => {
                 e.stopPropagation();
-                if (confirm('Delete this flight?')) {
+                const shouldDelete = window.confirm(
+                  `Delete "${flight.displayName || flight.fileName}"? This cannot be undone.`
+                );
+                if (shouldDelete) {
                   deleteFlight(flight.id);
                 }
               }}
@@ -72,7 +146,7 @@ export function FlightList() {
               <TrashIcon />
             </button>
           </div>
-        </button>
+        </div>
       ))}
     </div>
   );
@@ -127,6 +201,19 @@ function TrashIcon() {
         strokeLinejoin="round"
         strokeWidth={2}
         d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+      />
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M11 5h2m-1 0v14m-7 0h14"
       />
     </svg>
   );

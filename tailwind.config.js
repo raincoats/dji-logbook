@@ -9,12 +9,12 @@ export default {
       colors: {
         // DJI-inspired color scheme
         dji: {
-          primary: '#00A0DC',
-          secondary: '#1a1a2e',
-          accent: '#00D4AA',
-          dark: '#0f0f1a',
-          surface: '#16213e',
-          muted: '#4a4e69',
+          primary: 'rgb(var(--dji-primary) / <alpha-value>)',
+          secondary: 'rgb(var(--dji-secondary) / <alpha-value>)',
+          accent: 'rgb(var(--dji-accent) / <alpha-value>)',
+          dark: 'rgb(var(--dji-dark) / <alpha-value>)',
+          surface: 'rgb(var(--dji-surface) / <alpha-value>)',
+          muted: 'rgb(var(--dji-muted) / <alpha-value>)',
         },
       },
       animation: {
