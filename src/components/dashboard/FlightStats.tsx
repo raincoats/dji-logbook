@@ -4,6 +4,9 @@
  */
 
 import type { FlightDataResponse } from '@/types';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
+import { useMemo, useState } from 'react';
 import {
   formatDuration,
   formatDistance,
@@ -20,6 +23,8 @@ interface FlightStatsProps {
 export function FlightStats({ data }: FlightStatsProps) {
   const { flight, telemetry } = data;
   const { unitSystem } = useFlightStore();
+  const [isExportOpen, setIsExportOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Calculate min battery from telemetry
   const minBattery = telemetry.battery.reduce<number | null>((min, val) => {
@@ -27,6 +32,183 @@ export function FlightStats({ data }: FlightStatsProps) {
     if (min === null) return val;
     return val < min ? val : min;
   }, null);
+
+  const exportOptions = useMemo(
+    () => [
+      { id: 'csv', label: 'CSV', extension: 'csv' },
+      { id: 'json', label: 'JSON', extension: 'json' },
+      { id: 'gpx', label: 'GPX', extension: 'gpx' },
+      { id: 'kml', label: 'KML', extension: 'kml' },
+    ],
+    []
+  );
+
+  const buildCsv = () => {
+    const trackAligned = data.track.length === telemetry.time.length;
+    const headers = [
+      'time_s',
+      'lat',
+      'lng',
+      'alt_m',
+      'height_m',
+      'vps_height_m',
+      'altitude_m',
+      'speed_ms',
+      'battery_percent',
+      'battery_voltage_v',
+      'battery_temp_c',
+      'satellites',
+      'rc_signal',
+      'pitch_deg',
+      'roll_deg',
+      'yaw_deg',
+    ];
+
+    const escapeCsv = (value: string) => {
+      if (value.includes('"')) value = value.replace(/"/g, '""');
+      if (value.includes(',') || value.includes('\n') || value.includes('\r')) {
+        return `"${value}"`;
+      }
+      return value;
+    };
+
+    const getValue = (arr: (number | null)[] | undefined, index: number) => {
+      const val = arr?.[index];
+      return val === null || val === undefined ? '' : String(val);
+    };
+
+    const rows = telemetry.time.map((time, index) => {
+      const track = trackAligned ? data.track[index] : null;
+      const values = [
+        String(time),
+        track ? String(track[1]) : '',
+        track ? String(track[0]) : '',
+        track ? String(track[2]) : '',
+        getValue(telemetry.height, index),
+        getValue(telemetry.vpsHeight, index),
+        getValue(telemetry.altitude, index),
+        getValue(telemetry.speed, index),
+        getValue(telemetry.battery, index),
+        getValue(telemetry.batteryVoltage, index),
+        getValue(telemetry.batteryTemp, index),
+        getValue(telemetry.satellites, index),
+        getValue(telemetry.rcSignal, index),
+        getValue(telemetry.pitch, index),
+        getValue(telemetry.roll, index),
+        getValue(telemetry.yaw, index),
+      ].map(escapeCsv);
+      return values.join(',');
+    });
+
+    return [headers.join(','), ...rows].join('\n');
+  };
+
+  const buildJson = () => {
+    return JSON.stringify(
+      {
+        exportedAt: new Date().toISOString(),
+        flight,
+        telemetry,
+        track: data.track,
+      },
+      null,
+      2
+    );
+  };
+
+  const buildGpx = () => {
+    const name = flight.displayName || flight.fileName || 'DJI Flight';
+    const points = data.track
+      .map(([lng, lat, alt]) => {
+        return `      <trkpt lat="${lat}" lon="${lng}"><ele>${alt}</ele></trkpt>`;
+      })
+      .join('\n');
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="DJI Log Viewer" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>${escapeXml(name)}</name>
+    <time>${new Date().toISOString()}</time>
+  </metadata>
+  <trk>
+    <name>${escapeXml(name)}</name>
+    <trkseg>
+${points}
+    </trkseg>
+  </trk>
+</gpx>`;
+  };
+
+  const buildKml = () => {
+    const name = flight.displayName || flight.fileName || 'DJI Flight';
+    const coordinates = data.track
+      .map(([lng, lat, alt]) => `${lng},${lat},${alt}`)
+      .join(' ');
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>${escapeXml(name)}</name>
+    <Placemark>
+      <name>${escapeXml(name)}</name>
+      <LineString>
+        <tessellate>1</tessellate>
+        <altitudeMode>absolute</altitudeMode>
+        <coordinates>${coordinates}</coordinates>
+      </LineString>
+    </Placemark>
+  </Document>
+</kml>`;
+  };
+
+  const escapeXml = (value: string) => {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  };
+
+  const handleExport = async (format: string, extension: string) => {
+    if (isExporting) return;
+    setIsExporting(true);
+    try {
+      const baseName = (flight.displayName || flight.fileName || 'flight')
+        .replace(/[^a-z0-9-_]+/gi, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 80);
+      const filePath = await save({
+        defaultPath: `${baseName || 'flight'}.${extension}`,
+        filters: [{ name: format.toUpperCase(), extensions: [extension] }],
+      });
+      if (!filePath) return;
+
+      let content = '';
+      switch (format) {
+        case 'csv':
+          content = buildCsv();
+          break;
+        case 'json':
+          content = buildJson();
+          break;
+        case 'gpx':
+          content = buildGpx();
+          break;
+        case 'kml':
+          content = buildKml();
+          break;
+        default:
+          return;
+      }
+
+      await writeTextFile(filePath, content);
+    } catch (error) {
+      console.error('Export failed:', error);
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   return (
     <div className="bg-dji-secondary border-b border-gray-700 px-4 py-3">
@@ -37,11 +219,11 @@ export function FlightStats({ data }: FlightStatsProps) {
             {flight.displayName || flight.fileName}
           </h2>
           {flight.droneModel && !flight.droneModel.startsWith('Unknown') && (
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-gray-500 mt-2">
               {flight.droneModel}
             </p>
           )}
-          <div className="text-sm text-gray-400 flex flex-wrap items-center gap-2">
+          <div className="text-sm text-gray-400 flex flex-wrap items-center gap-2 mt-2">
             {formatDateTime(flight.startTime)}
             {flight.aircraftName && (
               <span className="px-2 py-0.5 rounded-full text-xs border border-dji-primary/40 text-dji-primary bg-dji-primary/10">
@@ -69,7 +251,7 @@ export function FlightStats({ data }: FlightStatsProps) {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-[repeat(5,minmax(0,1fr))_auto] gap-2">
         <StatCard
           label="Duration"
           value={formatDuration(flight.durationSecs)}
@@ -96,6 +278,40 @@ export function FlightStats({ data }: FlightStatsProps) {
           icon={<BatteryIcon percent={minBattery} />}
           alert={minBattery !== null && minBattery < 20}
         />
+        <div className="relative justify-self-end">
+          <button
+            type="button"
+            onClick={() => setIsExportOpen((open) => !open)}
+            className="w-[126px] h-full min-h-[52px] flex items-center justify-center gap-2 rounded-lg border-2 border-dji-accent/70 text-dji-accent text-sm font-semibold px-2 transition-all duration-200 hover:bg-dji-accent hover:text-white hover:shadow-md"
+          >
+            <ExportIcon />
+            {isExporting ? 'Exporting...' : 'Export'}
+            <ChevronIcon />
+          </button>
+          {isExportOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-40"
+                onClick={() => setIsExportOpen(false)}
+              />
+              <div className="absolute right-0 top-full z-50 mt-2 w-40 rounded-xl border border-gray-700 bg-dji-surface p-1 shadow-xl">
+                {exportOptions.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => {
+                      setIsExportOpen(false);
+                      handleExport(option.id, option.extension);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs rounded-lg text-gray-300 hover:bg-gray-700/40 hover:text-white transition-colors"
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -216,6 +432,42 @@ function BatteryIcon({ percent }: { percent: number | null }) {
         width="8"
         height={(fill / 100) * 15}
         rx="1"
+      />
+    </svg>
+  );
+}
+
+function ExportIcon() {
+  return (
+    <svg
+      className="w-4 h-4"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M12 5v10m0 0l-4-4m4 4l4-4M4 19h16"
+      />
+    </svg>
+  );
+}
+
+function ChevronIcon() {
+  return (
+    <svg
+      className="w-4 h-4"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M19 9l-7 7-7-7"
       />
     </svg>
   );

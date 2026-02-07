@@ -18,6 +18,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [appDataDir, setAppDataDir] = useState('');
+  const [appLogDir, setAppLogDir] = useState('');
   const {
     unitSystem,
     setUnitSystem,
@@ -32,6 +33,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     if (isOpen) {
       checkApiKey();
       getAppDataDir();
+      getAppLogDir();
     }
   }, [isOpen]);
 
@@ -67,6 +69,15 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       setAppDataDir(dir);
     } catch (err) {
       console.error('Failed to get app data dir:', err);
+    }
+  };
+
+  const getAppLogDir = async () => {
+    try {
+      const dir = await invoke<string>('get_app_log_dir');
+      setAppLogDir(dir);
+    } catch (err) {
+      console.error('Failed to get app log dir:', err);
     }
   };
 
@@ -238,6 +249,13 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               <br />
               <code className="text-xs text-gray-400 bg-dji-dark px-1 py-0.5 rounded">
                 {appDataDir || 'Loading...'}
+              </code>
+            </p>
+            <p className="text-xs text-gray-500 mt-2">
+              <strong className="text-gray-400">Log Location:</strong>
+              <br />
+              <code className="text-xs text-gray-400 bg-dji-dark px-1 py-0.5 rounded">
+                {appLogDir || 'Loading...'}
               </code>
             </p>
             <p className="text-xs text-gray-500 mt-2">

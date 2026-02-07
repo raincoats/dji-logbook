@@ -130,7 +130,7 @@ The built application will be in `src-tauri/target/release/bundle/`.
 ## Configuration
 
 - **DJI API Key**: Stored locally in `config.json` (never sent to third parties except DJI API). You can also provide it via `.env`.
-- **Database Location**: `~/.local/share/com.dji-logviewer.app/flights.db` on Linux (platform-specific app data path on other OSes).
+- **Database Location**: Stored in the platform-specific app data directory (e.g., AppData on Windows, Application Support on macOS, and local share on Linux).
 
 ## License
 

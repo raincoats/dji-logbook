@@ -14,6 +14,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::{AppHandle, Manager, State};
+use tauri_plugin_log::{Target, TargetKind};
+use log::LevelFilter;
 
 use database::{Database, DatabaseError};
 use models::{Flight, FlightDataResponse, ImportResult, OverviewStats, TelemetryData};
@@ -259,16 +261,31 @@ async fn get_app_data_dir(state: State<'_, AppState>) -> Result<String, String> 
     Ok(state.db.data_dir.to_string_lossy().to_string())
 }
 
+/// Get the app log directory path
+#[tauri::command]
+async fn get_app_log_dir(app: AppHandle) -> Result<String, String> {
+    app.path()
+        .app_log_dir()
+        .map_err(|e| format!("Failed to get app log directory: {}", e))
+        .map(|dir| dir.to_string_lossy().to_string())
+}
+
 // ============================================================================
 // MAIN ENTRY POINT
 // ============================================================================
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize logging
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    Target::new(TargetKind::LogDir { file_name: None }),
+                    Target::new(TargetKind::Stdout),
+                ])
+                .level(LevelFilter::Info)
+                .build(),
+        )
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -295,6 +312,7 @@ pub fn run() {
             has_api_key,
             set_api_key,
             get_app_data_dir,
+            get_app_log_dir,
         ])
         .run(tauri::generate_context!())
         .expect("Failed to run DJI Log Viewer");

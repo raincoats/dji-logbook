@@ -36,7 +36,14 @@ export function FlightList() {
   } | null>(null);
   const [selectedDrone, setSelectedDrone] = useState('');
   const [selectedBattery, setSelectedBattery] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortOption, setSortOption] = useState<
+    'name' | 'date' | 'duration' | 'distance'
+  >('date');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [isSortOpen, setIsSortOpen] = useState(false);
   const dateButtonRef = useRef<HTMLButtonElement | null>(null);
+  const sortButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const dateFormatter = useMemo(
     () =>
@@ -93,6 +100,17 @@ export function FlightList() {
     };
   }, [isDateOpen, updateDateAnchor]);
 
+  useEffect(() => {
+    if (!isSortOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsSortOpen(false);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isSortOpen]);
+
   const droneOptions = useMemo(() => {
     const entries = flights
       .map((flight) => ({
@@ -148,6 +166,67 @@ export function FlightList() {
       return true;
     });
   }, [dateRange, flights, selectedBattery, selectedDrone]);
+
+  const normalizedSearch = useMemo(
+    () => searchQuery.trim().toLowerCase(),
+    [searchQuery]
+  );
+
+  const getFlightTitle = useCallback((flight: { displayName?: string | null; fileName?: string | null }) => {
+    return (flight.displayName || flight.fileName || '').toString();
+  }, []);
+
+  const searchedFlights = useMemo(() => {
+    if (!normalizedSearch) return filteredFlights;
+    return filteredFlights.filter((flight) => {
+      const title = getFlightTitle(flight).toLowerCase();
+      return title.includes(normalizedSearch);
+    });
+  }, [filteredFlights, getFlightTitle, normalizedSearch]);
+
+  const sortedFlights = useMemo(() => {
+    const list = [...searchedFlights];
+    list.sort((a, b) => {
+      if (sortOption === 'name') {
+        const nameA = getFlightTitle(a).toLowerCase();
+        const nameB = getFlightTitle(b).toLowerCase();
+        const cmp = nameA.localeCompare(nameB);
+        return sortDirection === 'asc' ? cmp : -cmp;
+      }
+      if (sortOption === 'duration') {
+        const aDuration = a.durationSecs ?? 0;
+        const bDuration = b.durationSecs ?? 0;
+        return sortDirection === 'asc'
+          ? aDuration - bDuration
+          : bDuration - aDuration;
+      }
+      if (sortOption === 'distance') {
+        const aDistance = a.totalDistance ?? 0;
+        const bDistance = b.totalDistance ?? 0;
+        return sortDirection === 'asc'
+          ? aDistance - bDistance
+          : bDistance - aDistance;
+      }
+      const aDate = a.startTime ? new Date(a.startTime).getTime() : 0;
+      const bDate = b.startTime ? new Date(b.startTime).getTime() : 0;
+      return sortDirection === 'asc' ? aDate - bDate : bDate - aDate;
+    });
+    return list;
+  }, [getFlightTitle, searchedFlights, sortDirection, sortOption]);
+
+  const sortOptions = useMemo(
+    () => [
+      { value: 'name', label: 'Name' },
+      { value: 'date', label: 'Date' },
+      { value: 'duration', label: 'Duration' },
+      { value: 'distance', label: 'Distance' },
+    ],
+    []
+  );
+
+  const activeSortLabel = useMemo(() => {
+    return sortOptions.find((option) => option.value === sortOption)?.label ?? 'Sort';
+  }, [sortOption, sortOptions]);
 
   if (flights.length === 0) {
     return (
@@ -271,9 +350,65 @@ export function FlightList() {
         >
           Clear filters
         </button>
+
+        <div className="flex items-center gap-2">
+          <input
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search flights"
+            className="input w-full text-xs h-8 px-3"
+            aria-label="Search flights"
+          />
+          <div className="relative flex items-center">
+            <button
+              ref={sortButtonRef}
+              type="button"
+              onClick={() => setIsSortOpen((open) => !open)}
+              className="h-8 w-8 rounded-l-md border border-gray-700/70 bg-dji-dark text-gray-300 hover:text-white hover:border-gray-600 transition-colors flex items-center justify-center"
+              aria-label={`Sort flights: ${activeSortLabel}`}
+            >
+              <SortIcon />
+            </button>
+            <button
+              type="button"
+              onClick={() => setSortDirection((dir) => (dir === 'asc' ? 'desc' : 'asc'))}
+              className="h-8 w-7 rounded-r-md border border-l-0 border-gray-700/70 bg-dji-dark text-gray-300 hover:text-white hover:border-gray-600 transition-colors flex items-center justify-center"
+              aria-label={`Toggle sort direction: ${sortDirection === 'asc' ? 'ascending' : 'descending'}`}
+            >
+              <SortDirectionIcon direction={sortDirection} />
+            </button>
+            {isSortOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setIsSortOpen(false)}
+                />
+                <div className="absolute right-0 z-50 mt-2 w-56 rounded-xl border border-gray-700 bg-dji-surface p-1 shadow-xl">
+                  {sortOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => {
+                        setSortOption(option.value as typeof sortOption);
+                        setIsSortOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-xs rounded-lg transition-colors ${
+                        sortOption === option.value
+                          ? 'bg-dji-primary/20 text-white'
+                          : 'text-gray-300 hover:bg-gray-700/40 hover:text-white'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
-      {filteredFlights.map((flight) => (
+      {sortedFlights.map((flight) => (
         <div
           key={flight.id}
           onClick={() => selectFlight(flight.id)}
@@ -392,9 +527,9 @@ export function FlightList() {
           </div>
         </div>
       ))}
-      {filteredFlights.length === 0 && (
+      {sortedFlights.length === 0 && normalizedSearch.length === 0 && (
         <div className="p-4 text-center text-gray-500 text-xs">
-          No flights match the selected filters.
+          No flights match the current filters or search.
         </div>
       )}
     </div>
@@ -486,6 +621,44 @@ function CalendarIcon() {
       <line x1="16" y1="2" x2="16" y2="6" />
       <line x1="8" y1="2" x2="8" y2="6" />
       <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  );
+}
+
+function SortIcon() {
+  return (
+    <svg
+      className="w-4 h-4"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M3 6h10M3 12h14M3 18h18"
+      />
+    </svg>
+  );
+}
+
+function SortDirectionIcon({ direction }: { direction: 'asc' | 'desc' }) {
+  const rotation = direction === 'asc' ? 'rotate(180deg)' : 'rotate(0deg)';
+  return (
+    <svg
+      className="w-3.5 h-3.5"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+      style={{ transform: rotation }}
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M19 9l-7 7-7-7"
+      />
     </svg>
   );
 }
