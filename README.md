@@ -152,3 +152,17 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [DuckDB](https://duckdb.org/) - Analytical database
 - [Tauri](https://tauri.app/) - Desktop app framework
 
+## Love this project?
+
+I'm thrilled that you're using this dashboard. Your interest and engagement mean a lot to me! You can view and analyze more detailed DJI flight statistics with this setup than paying for any commertial solution.
+
+Maintaining and improving this project takes a significant amount of my free time. Your support helps keep me motivated to add new features and work on similar projects that benefit the community.
+
+If you find this project helpful, please consider:
+
+⭐ Starring this repository to show your support and spread the news!
+
+☕ Buying me a coffee if you'd like to contribute to its maintenance and future development.
+
+<img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi">
+

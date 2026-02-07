@@ -4,7 +4,6 @@
 
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { confirm } from '@tauri-apps/plugin-dialog';
 import { useFlightStore } from '@/stores/flightStore';
 
 interface SettingsModalProps {

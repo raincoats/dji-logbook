@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useFlightStore } from '@/stores/flightStore';
 import { Dashboard } from '@/components/dashboard/Dashboard';
-import { open } from '@tauri-apps/plugin-shell';
 
 function App() {
   const { loadFlights, error, clearError, donationAcknowledged, themeMode } = useFlightStore();
@@ -33,14 +32,6 @@ function App() {
     setBannerDismissed(true);
     if (typeof sessionStorage !== 'undefined') {
       sessionStorage.setItem('donationBannerDismissed', 'true');
-    }
-  };
-
-  const handleDonate = async () => {
-    try {
-      await open('https://ko-fi.com/arpandesign');
-    } catch {
-      window.open('https://ko-fi.com/arpandesign', '_blank', 'noopener');
     }
   };
 

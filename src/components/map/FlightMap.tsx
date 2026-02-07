@@ -240,8 +240,7 @@ export function FlightMap({ track, themeMode }: FlightMapProps) {
     <div className="relative h-full w-full min-h-0">
       <Map
         {...viewState}
-        className="absolute inset-0"
-        style={{ width: '100%', height: '100%' }}
+        style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }}
         mapStyle={activeMapStyle}
         attributionControl={false}
         ref={mapRef}
@@ -297,8 +296,7 @@ export function FlightMap({ track, themeMode }: FlightMapProps) {
         viewState={viewState}
         controller={false}
         layers={deckLayers}
-        className="absolute inset-0"
-        style={{ width: '100%', height: '100%', pointerEvents: 'none' }}
+        style={{ width: '100%', height: '100%', pointerEvents: 'none', position: 'absolute', inset: 0 }}
       />
     </div>
   );

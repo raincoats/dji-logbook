@@ -6,7 +6,7 @@
 
 import { useMemo, useRef, useCallback } from 'react';
 import ReactECharts from 'echarts-for-react';
-import type { EChartsOption, ECharts } from 'echarts';
+import type { EChartsOption, ECharts, LineSeriesOption } from 'echarts';
 import type { TelemetryData } from '@/types';
 import type { UnitSystem } from '@/lib/utils';
 import { useFlightStore } from '@/stores/flightStore';
@@ -327,6 +327,56 @@ function createAltitudeSpeedChart(
     ...vpsHeightSeries,
   ]);
   const speedRange = computeRange(speedSeries);
+
+  const series: LineSeriesOption[] = [
+    ...(showCombined
+      ? [
+          {
+            name: 'RC Signal',
+            type: 'line',
+            data: data.rcSignal,
+            smooth: true,
+            symbol: 'none',
+            itemStyle: {
+              color: '#22c55e',
+            },
+            lineStyle: {
+              color: '#22c55e',
+              width: 1.5,
+            },
+          },
+        ]
+      : [
+          {
+            name: 'RC Uplink',
+            type: 'line',
+            data: rcUplink,
+            smooth: true,
+            symbol: 'none',
+            itemStyle: {
+              color: '#22c55e',
+            },
+            lineStyle: {
+              color: '#22c55e',
+              width: 1.5,
+            },
+          },
+          {
+            name: 'RC Downlink',
+            type: 'line',
+            data: rcDownlink,
+            smooth: true,
+            symbol: 'none',
+            itemStyle: {
+              color: '#38bdf8',
+            },
+            lineStyle: {
+              color: '#38bdf8',
+              width: 1.5,
+            },
+          },
+        ]),
+  ];
 
   return {
     ...baseChartConfig,
@@ -747,55 +797,7 @@ function createRcSignalChart(
         },
       },
     },
-    series: [
-      ...(showCombined
-        ? [
-            {
-              name: 'RC Signal',
-              type: 'line',
-              data: data.rcSignal,
-              smooth: true,
-              symbol: 'none',
-              itemStyle: {
-                color: '#22c55e',
-              },
-              lineStyle: {
-                color: '#22c55e',
-                width: 1.5,
-              },
-            },
-          ]
-        : [
-            {
-              name: 'RC Uplink',
-              type: 'line',
-              data: rcUplink,
-              smooth: true,
-              symbol: 'none',
-              itemStyle: {
-                color: '#22c55e',
-              },
-              lineStyle: {
-                color: '#22c55e',
-                width: 1.5,
-              },
-            },
-            {
-              name: 'RC Downlink',
-              type: 'line',
-              data: rcDownlink,
-              smooth: true,
-              symbol: 'none',
-              itemStyle: {
-                color: '#38bdf8',
-              },
-              lineStyle: {
-                color: '#38bdf8',
-                width: 1.5,
-              },
-            },
-          ]),
-    ],
+    series,
   };
 }
 
